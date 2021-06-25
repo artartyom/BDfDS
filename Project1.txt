@@ -1,0 +1,279 @@
+/*
+Задание 1.
+*/
+
+-- Собрать статистику по дням
+
+select date,
+  count(event) as count_events,
+  countIf(event = 'view') as count_views,
+  countIf(event = 'click') as count_clicks
+from ads_data
+group by date
+;
+
+
+-- Посчитать число уникальных объявлений и кампаний
+
+select count(distinct(ad_id)) as ad_id_uniqueCount,
+    count(distinct(campaign_union_id)) as campaign_id_uniqueCount
+from ads_data
+;
+
+/*
+Задание 2.
+*/
+
+-- Сначала соберем активность за этот день
+
+select ad_id,
+       count(event) as total_interactions,
+       countIf(event = 'view') as total_views,
+       countIf(event = 'click') as total_clicks
+from ads_data
+where date = '2019-04-05'
+group by ad_id
+order by total_interactions desc
+;
+
+-- Посмотрим, возросла активность на всех платформах или на каких-то отдельных.
+
+select date, platform,
+       countIf(event = 'view') as count_views,
+       countIf(event = 'click') as count_clicks
+from ads_data
+group by date, platform
+order by platform, date
+;
+
+-- Активность возросла на всех платформах. При этом просмотры увеличивались постепенно, а вот клики подскочили неожиданно и очень резко.
+-- Очень много активности с объявлением 112583. Посмотрим данные по этому объявлению.
+
+select date, platform,
+       countIf(event = 'click') as count_clicks,
+       countIf(event = 'view') as count_views
+from ads_data
+where ad_id = 112583
+group by date, platform
+order by platform, date
+;
+
+-- Это объявление было добавлено 2019-04-05 и сразу собрало необычно большое количество кликов со всех платформ
+-- Посмотрим на другие объявления с большим количеством кликов (топ-10 из того, что кликали 2019-04-05)
+
+select date, ad_id, count(event) as count_clicks
+from ads_data
+where ad_id in
+    (select t1.ad_id
+    from (
+        select ad_id, count(event) as count_clicks
+        from ads_data
+        where event = 'click' and date = '2019-04-05'
+        group by ad_id
+        order by count_clicks desc
+        ) as t1
+    limit 10)
+group by date, ad_id
+order by ad_id, date
+;
+
+-- Все эти объявления были добавлены 5 числа и сразу собрали относительно большое количество кликов.
+
+/* 
+Подводя итог:
+2019-04-05 появилась группа объявлений, которые собрали большое количество кликов. На порядок больше остальных (почти 340 тысяч кликов!) собрало объявление 112583, но оно не единственное. При этом клики приходили со всех платформ. Наблюдалось также увеличение числа просмотров, но не такое драматическое.
+*/
+
+/* 
+Задание 3
+*/
+
+-- Объявления с топ10 CTR:
+
+select ad_id,
+       countIf(event = 'click') as count_clicks,
+       countIf(event = 'view') as count_views,
+       (count_clicks / count_views) as CTR
+from ads_data
+group by ad_id
+having count_clicks > 0 and count_views > 0
+order by CTR desc
+limit 10
+;
+
+-- Среднее и медиана CTR (да, различаются):
+
+select avg(t1.CTR) as ctr_mean, median(t1.CTR) as ctr_median
+from (
+      select ad_id,
+             countIf(event = 'click') as count_clicks,
+             countIf(event = 'view') as count_views,
+             (count_clicks / count_views) as CTR
+      from ads_data
+      group by ad_id
+      having count_clicks > 0
+         and count_views > 0
+         ) as t1
+;
+
+/*
+Задание 4
+*/
+
+-- Составим список объявлений, которые кликали, но никогда не просматривали, и список платформ, с которых это произошло
+
+select ad_id,
+       arraySort(arrayDistinct(groupArray(platform))) as platforms_list,
+       count(event) as number_misclicks
+from ads_data
+where ad_id not in
+(select distinct ad_id
+from ads_data
+where event = 'view')
+group by ad_id
+;
+
+-- Такие объявления есть, причем для каждого из них приходили клики с мобильных устройств.
+-- Посмотрим другие показатели для этих объявлений, чтобы понять, есть ли еще какая-то логика.
+
+select time,
+       ad_cost,
+       ad_cost_type, platform, target_audience_count, client_union_id, campaign_union_id, has_video
+from ads_data
+where ad_id not in
+(select distinct ad_id
+from ads_data
+where event = 'view')
+;
+
+-- Еще два общих параметра: все эти случаи произошли 1 апреля, и ни у одного из этих объявлений не было видео.
+-- Проблема в том, что 1 апреля было корректно показано много других объявлений без видео.
+-- Больше закономерностей нет: цена и охват у проблемных объявлений очень разные, они принадлежат разным клиентам и имеют разный тип оплаты.
+
+/* Подводя итог:
+Таких объявлений (есть клики, нет показов) 9 штук. Все эти события происходили 1 апреля. Ни у одного из этих объявлений нет видео, и по крайней мере одно из взаимодействий в каждом случае происходило с мобильных устройств.
+*/
+
+/* 
+Задание 5
+*/
+
+-- Сначала посмотрим на средний и медианный CTR независимо от платформы.
+
+select has_video,
+       avg(ctr) as ctr_avg,
+       median(ctr) as ctr_median
+from
+(select ad_id,
+       has_video,
+        platform,
+       countIf(event = 'click') as count_clicks,
+       countIf(event = 'view') as count_views,
+       count_clicks / count_views as ctr
+from ads_data
+group by ad_id, has_video, platform
+having count_views > 0) as ctr_data
+group by has_video
+order by has_video
+;
+
+-- Из-за того, что много объявлений с показами, но без кликов, медианный CTR равен нулю.
+-- Средний CTR выше у объявлений с видео.
+-- Посмотрим на статистику по отдельным платформам.
+
+select has_video,
+       platform,
+       avg(ctr) as ctr_avg,
+       median(ctr) as ctr_median
+from
+(select ad_id,
+       has_video,
+        platform,
+       countIf(event = 'click') as count_clicks,
+       countIf(event = 'view') as count_views,
+       count_clicks / count_views as ctr
+from ads_data
+group by ad_id, has_video, platform
+having count_views > 0) as ctr_data
+group by has_video, platform
+order by platform, has_video
+;
+
+-- Для мобильных платформ наблюдается та же тенденция: объявления с видео имеют больший средний CTR, чем объявления без видео.
+-- Кроме того, для мобильных платформ у объявлений с видео даже медиана больше нуля, т.е. больше, чем у половины объявлений были хоть какие-то клики.
+-- Для web платформы, впрочем, объявления без видео имеют значительно больший средний CTR.
+
+-- Теперь посмотрим на 95-й процентиль CTR за 2019-04-04.
+
+select quantile(0.95)(ctr) as q95
+from
+(select ad_id,
+       countIf(event = 'click') as count_clicks,
+       countIf(event = 'view') as count_views,
+       count_clicks / count_views as ctr
+from ads_data
+where date = '2019-04-04'
+group by ad_id
+having count_views > 0)
+;
+
+/* 
+Задание 6
+*/
+
+select date,
+       sum(multiIf(
+           event = 'view' and ad_cost_type = 'CPM',
+           ad_cost / 1000,
+           event = 'click' and ad_cost_type = 'CPC',
+           ad_cost,
+           0
+           )) as profit
+from ads_data
+group by date
+order by profit desc
+;
+
+-- Больше всего прибыли было получено 5 апреля (что ожидаемо, т.к. в этот день был всплеск активности из-за пачки "кликабельных" объявлений)
+
+/*
+Задание 7
+*/
+
+-- Статистика за все время: лидирует Андроид, потом iOS, потом web
+
+select countIf(platform = 'ios') / count(platform) as ios,
+       countIf(platform = 'android') / count(platform) as android,
+       countIf(platform = 'web') / count(platform) as web,
+       ios+android+web as checkTotal
+from ads_data
+where event = 'view'
+;
+
+-- Статистика по дням: та же закономерность
+
+select date,
+       countIf(platform = 'ios') / count(platform) as ios,
+       countIf(platform = 'android') / count(platform) as android,
+       countIf(platform = 'web') / count(platform) as web,
+       ios+android+web as checkTotal
+from ads_data
+where event = 'view'
+group by date
+;
+
+/*
+Задание 8
+*/
+
+-- Да, такие объявления есть. Всего 54 случая с учетом платформы (показали на одной платформе, кликнули на другой = баг, тк клик на другой платформе произошел без показа)
+
+select uniq(ad_id) as countBugs
+from(
+    select ad_id,
+           platform,
+           argMin(event, time) as firstEvent
+    from ads_data
+    group by ad_id, platform
+    having firstEvent = 'click')
+;
